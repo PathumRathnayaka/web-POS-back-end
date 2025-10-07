@@ -21,10 +21,10 @@ const connectDB = async () => {
     const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://thilinapathumrathnayaka:Bn4mUAbsl2UpAoZg@cluster0.di4pjcd.mongodb.net/pos_cloud?retryWrites=true&w=majority&appName=Cluster0';
     
     console.log('Attempting to connect to MongoDB...');
-    console.log('Connection string:', MONGODB_URI.replace(/:[^:@]+@/, ':****@')); // Hide password
+    console.log('Connection string:', MONGODB_URI.replace(/:[^:@]+@/, ':****@'));
     
     const client = new MongoClient(MONGODB_URI, {
-      serverSelectionTimeoutMS: 30000,  // Increased to 30 seconds
+      serverSelectionTimeoutMS: 30000,
       socketTimeoutMS: 45000,
       connectTimeoutMS: 30000,
       maxPoolSize: 10,
@@ -45,6 +45,44 @@ const connectDB = async () => {
   }
 };
 
+// Helper function to find quantity by product ID (handles multiple field name variations)
+const findQuantityByProductId = async (productId) => {
+  // Try multiple field name variations
+  const quantity = await quantitiesCollection.findOne({
+    $or: [
+      { productMysqlId: productId },
+      { product_mysql_id: productId },
+      { productId: productId },
+      { product_id: productId }
+    ]
+  });
+  return quantity;
+};
+
+// Helper function to format product with quantity
+const formatProductWithQuantity = (product, quantity) => {
+  return {
+    id: product.mysqlId || product.mysql_id || product.id,
+    name: product.name,
+    barcode: product.barcode,
+    discount: product.discount,
+    tax: product.tax,
+    sale_price: product.salePrice || product.sale_price,
+    category: product.category,
+    expire_date: product.expireDate || product.expire_date,
+    supplier_id: product.supplierId || product.supplier_id,
+    supplier_name: product.supplierName || product.supplier_name,
+    created_date: product.createdDate || product.created_date,
+    quantities: quantity ? {
+      id: quantity._id,
+      product_id: product.mysqlId || product.mysql_id || product.id,
+      quantity_size: quantity.quantitySize || quantity.quantity_size,
+      created_date: quantity.createdDate || quantity.created_date,
+      updated_date: quantity.updatedDate || quantity.updated_date
+    } : null
+  };
+};
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Server is running' });
@@ -55,6 +93,7 @@ app.get('/api/debug', async (req, res) => {
   try {
     const sampleProduct = await productsCollection.findOne({});
     const sampleQuantity = await quantitiesCollection.findOne({});
+    const allQuantities = await quantitiesCollection.find({}).limit(5).toArray();
     
     res.json({
       success: true,
@@ -62,7 +101,9 @@ app.get('/api/debug', async (req, res) => {
         sampleProduct,
         sampleQuantity,
         productFields: sampleProduct ? Object.keys(sampleProduct) : [],
-        quantityFields: sampleQuantity ? Object.keys(sampleQuantity) : []
+        quantityFields: sampleQuantity ? Object.keys(sampleQuantity) : [],
+        allQuantitiesSample: allQuantities,
+        totalQuantities: await quantitiesCollection.countDocuments()
       }
     });
   } catch (error) {
@@ -76,33 +117,11 @@ app.get('/api/products', async (req, res) => {
   try {
     const products = await productsCollection.find({}).toArray();
     
-    // Fetch quantities for all products
     const productsWithQuantities = await Promise.all(
       products.map(async (product) => {
-        const quantity = await quantitiesCollection.findOne({ 
-          productMysqlId: product.mysqlId 
-        });
-        
-        return {
-          id: product.mysqlId,
-          name: product.name,
-          barcode: product.barcode,
-          discount: product.discount,
-          tax: product.tax,
-          sale_price: product.salePrice || product.sale_price,
-          category: product.category,
-          expire_date: product.expireDate || product.expire_date,
-          supplier_id: product.supplierId || product.supplier_id,
-          supplier_name: product.supplierName || product.supplier_name,
-          created_date: product.createdDate || product.created_date,
-          quantities: quantity ? {
-            id: quantity._id,
-            product_id: product.mysqlId,
-            quantity_size: quantity.quantitySize || quantity.quantity_size,
-            created_date: quantity.createdDate || quantity.created_date,
-            updated_date: quantity.updatedDate || quantity.updated_date
-          } : null
-        };
+        const productId = product.mysqlId || product.mysql_id || product.id;
+        const quantity = await findQuantityByProductId(productId);
+        return formatProductWithQuantity(product, quantity);
       })
     );
     
@@ -116,35 +135,21 @@ app.get('/api/products', async (req, res) => {
 // Get product by ID
 app.get('/api/products/:id', async (req, res) => {
   try {
-    const product = await productsCollection.findOne({ mysqlId: parseInt(req.params.id) });
+    const productId = parseInt(req.params.id);
+    const product = await productsCollection.findOne({ 
+      $or: [
+        { mysqlId: productId },
+        { mysql_id: productId },
+        { id: productId }
+      ]
+    });
+    
     if (!product) {
       return res.status(404).json({ success: false, error: 'Product not found' });
     }
     
-    const quantity = await quantitiesCollection.findOne({ 
-      productMysqlId: product.mysqlId 
-    });
-    
-    const productWithQuantity = {
-      id: product.mysqlId,
-      name: product.name,
-      barcode: product.barcode,
-      discount: product.discount,
-      tax: product.tax,
-      sale_price: product.salePrice || product.sale_price,
-      category: product.category,
-      expire_date: product.expireDate || product.expire_date,
-      supplier_id: product.supplierId || product.supplier_id,
-      supplier_name: product.supplierName || product.supplier_name,
-      created_date: product.createdDate || product.created_date,
-      quantities: quantity ? {
-        id: quantity._id,
-        product_id: product.mysqlId,
-        quantity_size: quantity.quantitySize || quantity.quantity_size,
-        created_date: quantity.createdDate || quantity.created_date,
-        updated_date: quantity.updatedDate || quantity.updated_date
-      } : null
-    };
+    const quantity = await findQuantityByProductId(productId);
+    const productWithQuantity = formatProductWithQuantity(product, quantity);
     
     res.json({ success: true, data: productWithQuantity });
   } catch (error) {
@@ -160,30 +165,9 @@ app.get('/api/products/category/:category', async (req, res) => {
     
     const productsWithQuantities = await Promise.all(
       products.map(async (product) => {
-        const quantity = await quantitiesCollection.findOne({ 
-          productMysqlId: product.mysqlId 
-        });
-        
-        return {
-          id: product.mysqlId,
-          name: product.name,
-          barcode: product.barcode,
-          discount: product.discount,
-          tax: product.tax,
-          sale_price: product.salePrice || product.sale_price,
-          category: product.category,
-          expire_date: product.expireDate || product.expire_date,
-          supplier_id: product.supplierId || product.supplier_id,
-          supplier_name: product.supplierName || product.supplier_name,
-          created_date: product.createdDate || product.created_date,
-          quantities: quantity ? {
-            id: quantity._id,
-            product_id: product.mysqlId,
-            quantity_size: quantity.quantitySize || quantity.quantity_size,
-            created_date: quantity.createdDate || quantity.created_date,
-            updated_date: quantity.updatedDate || quantity.updated_date
-          } : null
-        };
+        const productId = product.mysqlId || product.mysql_id || product.id;
+        const quantity = await findQuantityByProductId(productId);
+        return formatProductWithQuantity(product, quantity);
       })
     );
     
@@ -207,30 +191,9 @@ app.get('/api/products/search/:query', async (req, res) => {
     
     const productsWithQuantities = await Promise.all(
       products.map(async (product) => {
-        const quantity = await quantitiesCollection.findOne({ 
-          productMysqlId: product.mysqlId 
-        });
-        
-        return {
-          id: product.mysqlId,
-          name: product.name,
-          barcode: product.barcode,
-          discount: product.discount,
-          tax: product.tax,
-          sale_price: product.sale_price,
-          category: product.category,
-          expire_date: product.expire_date,
-          supplier_id: product.supplier_id,
-          supplier_name: product.supplier_name,
-          created_date: product.created_date,
-          quantities: quantity ? {
-            id: quantity._id,
-            product_id: product.mysqlId,
-            quantity_size: quantity.quantity_size,
-            created_date: quantity.created_date,
-            updated_date: quantity.updated_date
-          } : null
-        };
+        const productId = product.mysqlId || product.mysql_id || product.id;
+        const quantity = await findQuantityByProductId(productId);
+        return formatProductWithQuantity(product, quantity);
       })
     );
     
@@ -255,8 +218,14 @@ app.get('/api/quantities', async (req, res) => {
 // Get quantity by product MySQL ID
 app.get('/api/quantities/product/:productId', async (req, res) => {
   try {
+    const productId = parseInt(req.params.productId);
     const quantities = await quantitiesCollection.find({
-      productMysqlId: parseInt(req.params.productId)
+      $or: [
+        { productMysqlId: productId },
+        { product_mysql_id: productId },
+        { productId: productId },
+        { product_id: productId }
+      ]
     }).toArray();
     res.json({ success: true, data: quantities, count: quantities.length });
   } catch (error) {
@@ -269,13 +238,26 @@ app.get('/api/quantities/product/:productId', async (req, res) => {
 app.get('/api/products/:id/with-quantities', async (req, res) => {
   try {
     const productId = parseInt(req.params.id);
-    const product = await productsCollection.findOne({ mysqlId: productId });
+    const product = await productsCollection.findOne({ 
+      $or: [
+        { mysqlId: productId },
+        { mysql_id: productId },
+        { id: productId }
+      ]
+    });
 
     if (!product) {
       return res.status(404).json({ success: false, error: 'Product not found' });
     }
 
-    const quantities = await quantitiesCollection.find({ productMysqlId: productId }).toArray();
+    const quantities = await quantitiesCollection.find({
+      $or: [
+        { productMysqlId: productId },
+        { product_mysql_id: productId },
+        { productId: productId },
+        { product_id: productId }
+      ]
+    }).toArray();
 
     res.json({
       success: true,
@@ -296,6 +278,7 @@ const startServer = async () => {
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`API available at http://localhost:${PORT}/api/products`);
+    console.log(`Debug endpoint: http://localhost:${PORT}/api/debug`);
   });
 };
 
