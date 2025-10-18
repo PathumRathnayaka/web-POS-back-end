@@ -27,6 +27,8 @@ import {
 import customerRoutes from './src/routes/customerRoutes.js';
 import saleRoutes from './src/routes/saleRoutes.js';
 import supplierRoutes from './src/routes/supplierRoutes.js';
+import productRoutes from './src/routes/productRoutes.js';
+import quantityRoutes from './src/routes/quantityRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -58,117 +60,10 @@ app.get('/health', asyncHandler(async (req, res) => {
 app.use('/api/customers', customerRoutes);
 app.use('/api/sales', saleRoutes);
 app.use('/api/suppliers', supplierRoutes);
+app.use('/api/products', productRoutes);
+app.use('/api/quantities', quantityRoutes);
 
-// Legacy product endpoints (keeping existing functionality)
-app.get('/api/products', asyncHandler(async (req, res) => {
-  try {
-    const productsCollection = databaseManager.getCollection('products');
-    const quantitiesCollection = databaseManager.getCollection('quantities');
-    
-    const products = await productsCollection.find({}).toArray();
-    
-    const productsWithQuantities = await Promise.all(
-      products.map(async (product) => {
-        const productId = product.mysqlId || product.mysql_id || product.id;
-        const quantity = await quantitiesCollection.findOne({
-          $or: [
-            { productMysqlId: productId },
-            { product_mysql_id: productId },
-            { productId: productId },
-            { product_id: productId }
-          ]
-        });
-        
-        return {
-          id: product.mysqlId || product.mysql_id || product.id,
-          name: product.name,
-          barcode: product.barcode,
-          discount: product.discount,
-          tax: product.tax,
-          sale_price: product.salePrice || product.sale_price,
-          category: product.category,
-          expire_date: product.expireDate || product.expire_date,
-          supplier_id: product.supplierId || product.supplier_id,
-          supplier_name: product.supplierName || product.supplier_name,
-          created_date: product.createdDate || product.created_date,
-          quantities: quantity ? {
-            id: quantity._id,
-            product_id: product.mysqlId || product.mysql_id || product.id,
-            quantity_size: quantity.quantitySize || quantity.quantity_size,
-            created_date: quantity.createdDate || quantity.created_date,
-            updated_date: quantity.updatedDate || quantity.updated_date
-          } : null
-        };
-      })
-    );
-    
-    res.json({ 
-      success: true, 
-      data: productsWithQuantities, 
-      count: productsWithQuantities.length 
-    });
-  } catch (error) {
-    console.error('Error fetching products:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-}));
-
-app.get('/api/products/:id', asyncHandler(async (req, res) => {
-  try {
-    const productsCollection = databaseManager.getCollection('products');
-    const quantitiesCollection = databaseManager.getCollection('quantities');
-    
-    const productId = parseInt(req.params.id);
-    const product = await productsCollection.findOne({ 
-      $or: [
-        { mysqlId: productId },
-        { mysql_id: productId },
-        { id: productId }
-      ]
-    });
-    
-    if (!product) {
-      return res.status(404).json({ success: false, error: 'Product not found' });
-    }
-    
-    const quantity = await quantitiesCollection.findOne({
-      $or: [
-        { productMysqlId: productId },
-        { product_mysql_id: productId },
-        { productId: productId },
-        { product_id: productId }
-      ]
-    });
-    
-    const productWithQuantity = {
-      id: product.mysqlId || product.mysql_id || product.id,
-      name: product.name,
-      barcode: product.barcode,
-      discount: product.discount,
-      tax: product.tax,
-      sale_price: product.salePrice || product.sale_price,
-      category: product.category,
-      expire_date: product.expireDate || product.expire_date,
-      supplier_id: product.supplierId || product.supplier_id,
-      supplier_name: product.supplierName || product.supplier_name,
-      created_date: product.createdDate || product.created_date,
-      quantities: quantity ? {
-        id: quantity._id,
-        product_id: product.mysqlId || product.mysql_id || product.id,
-        quantity_size: quantity.quantitySize || quantity.quantity_size,
-        created_date: quantity.createdDate || quantity.created_date,
-        updated_date: quantity.updatedDate || quantity.updated_date
-      } : null
-    };
-    
-    res.json({ success: true, data: productWithQuantity });
-  } catch (error) {
-    console.error('Error fetching product:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-}));
-
-// Debug endpoint
+// Debug endpoint for database structure
 app.get('/api/debug', asyncHandler(async (req, res) => {
   try {
     const productsCollection = databaseManager.getCollection('products');
@@ -195,6 +90,7 @@ app.get('/api/debug', asyncHandler(async (req, res) => {
   }
 }));
 
+
 // 404 handler
 app.use(notFound);
 
@@ -216,6 +112,7 @@ const startServer = async () => {
       console.log(`🛒 Sales API: http://localhost:${PORT}/api/sales`);
       console.log(`🏢 Suppliers API: http://localhost:${PORT}/api/suppliers`);
       console.log(`📦 Products API: http://localhost:${PORT}/api/products`);
+      console.log(`📊 Quantities API: http://localhost:${PORT}/api/quantities`);
     });
   } catch (error) {
     console.error('❌ Failed to start server:', error);
