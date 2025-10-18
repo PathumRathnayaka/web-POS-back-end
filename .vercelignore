@@ -1,11 +1,8 @@
-
 node_modules
 .env
 .env.local
 .vercel
 *.log
 .DS_Store
-README.md
-guide.md
 app.js
 index.js
