@@ -27,6 +27,7 @@ import saleRoutes from '../src/routes/saleRoutes.js';
 import supplierRoutes from '../src/routes/supplierRoutes.js';
 import productRoutes from '../src/routes/productRoutes.js';
 import quantityRoutes from '../src/routes/quantityRoutes.js';
+import authRoutes from '../src/routes/authRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -43,6 +44,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Database connection singleton
 let isConnected = false;
+let isSeeded = false;
 
 const connectDB = async () => {
   if (isConnected) {
@@ -54,6 +56,18 @@ const connectDB = async () => {
     await databaseManager.connect();
     isConnected = true;
     console.log('Database connected successfully');
+    
+    // Seed admin user if not already seeded
+    if (!isSeeded) {
+      try {
+        const { seedAdminUser } = await import('../src/utils/seedAdmin.js');
+        await seedAdminUser();
+        isSeeded = true;
+      } catch (error) {
+        console.error('Error seeding admin user:', error);
+        // Don't throw - continue even if seeding fails
+      }
+    }
   } catch (error) {
     console.error('Database connection failed:', error);
     throw error;
@@ -80,6 +94,7 @@ app.get('/', (req, res) => {
     version: '1.0.0',
     endpoints: {
       health: '/health',
+      auth: '/api/auth',
       customers: '/api/customers',
       sales: '/api/sales',
       suppliers: '/api/suppliers',
@@ -103,6 +118,7 @@ app.use(async (req, res, next) => {
   }
 });
 
+app.use('/api/auth', authRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/sales', saleRoutes);
 app.use('/api/suppliers', supplierRoutes);

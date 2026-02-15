@@ -29,6 +29,7 @@ import saleRoutes from './src/routes/saleRoutes.js';
 import supplierRoutes from './src/routes/supplierRoutes.js';
 import productRoutes from './src/routes/productRoutes.js';
 import quantityRoutes from './src/routes/quantityRoutes.js';
+import authRoutes from './src/routes/authRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -57,6 +58,7 @@ app.get('/health', asyncHandler(async (req, res) => {
 }));
 
 // API routes
+app.use('/api/auth', authRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/sales', saleRoutes);
 app.use('/api/suppliers', supplierRoutes);
@@ -103,11 +105,16 @@ const startServer = async () => {
     // Connect to database
     await databaseManager.connect();
     
+    // Seed admin user
+    const { seedAdminUser } = await import('./src/utils/seedAdmin.js');
+    await seedAdminUser();
+    
     // Start server
     app.listen(PORT, () => {
       console.log(`🚀 WebPOS Backend Server running on port ${PORT}`);
       console.log(`📊 API Documentation: http://localhost:${PORT}/health`);
       console.log(`🔍 Debug endpoint: http://localhost:${PORT}/api/debug`);
+      console.log(`🔐 Auth API: http://localhost:${PORT}/api/auth`);
       console.log(`👥 Customers API: http://localhost:${PORT}/api/customers`);
       console.log(`🛒 Sales API: http://localhost:${PORT}/api/sales`);
       console.log(`🏢 Suppliers API: http://localhost:${PORT}/api/suppliers`);

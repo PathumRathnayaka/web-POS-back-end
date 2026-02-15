@@ -62,7 +62,8 @@ class DatabaseManager {
         'sales', 
         'suppliers',
         'products',
-        'quantities'
+        'quantities',
+        'users'
       ];
 
       for (const collectionName of collections) {
@@ -103,6 +104,10 @@ class DatabaseManager {
           case 'quantities':
             await collection.createIndex({ productMysqlId: 1 });
             await collection.createIndex({ productId: 1 });
+            break;
+            
+          case 'users':
+            await collection.createIndex({ username: 1 }, { unique: true });
             break;
         }
         
