@@ -9,7 +9,9 @@ import { Quantity } from '../models/Quantity.js';
 export class ProductService {
   constructor() {
     this.collectionName = 'products';
-    this.quantityCollectionName = 'quantities';
+    this.quantityCollectionName = 'product_quantity_batches';
+    this.returnsCollectionName = 'product_returns';
+    this.suppliersCollectionName = 'suppliers';
   }
 
   getCollection() {
@@ -20,21 +22,103 @@ export class ProductService {
     return databaseManager.getCollection(this.quantityCollectionName);
   }
 
+  getReturnsCollection() {
+    return databaseManager.getCollection(this.returnsCollectionName);
+  }
+
+  getSuppliersCollection() {
+    return databaseManager.getCollection(this.suppliersCollectionName);
+  }
+
   /**
-   * Helper function to find quantity by product ID (handles multiple field name variations)
-   * @param {number} productId - Product ID
-   * @returns {Promise<Object|null>} Quantity data
+   * Helper function to compute total quantity for a product from product_quantity_batches
+   * Sums the 'quantity' field across all non-deleted batches for the given product ID.
+   * @param {number} productId - Product mysqlId
+   * @returns {Promise<Object>} Aggregated quantity object with quantity_size field
    */
   async findQuantityByProductId(productId) {
-    const quantity = await this.getQuantityCollection().findOne({
-      $or: [
-        { productMysqlId: productId },
-        { product_mysql_id: productId },
-        { productId: productId },
-        { product_id: productId }
-      ]
-    });
-    return quantity;
+    const batches = await this.getQuantityCollection()
+      .find({
+        $or: [
+          { productId: productId },
+          { product_id: productId }
+        ],
+        deleted: { $ne: true }
+      })
+      .toArray();
+
+    const totalQuantity = batches.reduce((sum, batch) => {
+      return sum + parseFloat(batch.quantity || 0);
+    }, 0);
+
+    return {
+      quantity_size: totalQuantity,
+      batches: batches
+    };
+  }
+
+  /**
+   * Find total returned quantity for a product from product_returns.
+   * Searches returnItems embedded in each return document.
+   * @param {number} productId - Product mysqlId
+   * @returns {Promise<Object>} Return info: hasReturnedStock, totalReturnedQuantity
+   */
+  async findReturnsByProductId(productId) {
+    const returns = await this.getReturnsCollection()
+      .find({ 'returnItems.productId': productId })
+      .toArray();
+
+    let totalReturnedQuantity = 0;
+    for (const ret of returns) {
+      for (const item of (ret.returnItems || [])) {
+        const itemProductId = typeof item.productId === 'object'
+          ? Number(item.productId)
+          : item.productId;
+        if (itemProductId === productId) {
+          totalReturnedQuantity += parseFloat(item.returnedQuantity || 0);
+        }
+      }
+    }
+
+    return {
+      hasReturnedStock: totalReturnedQuantity > 0,
+      totalReturnedQuantity
+    };
+  }
+
+  /**
+   * Check if a product is expired based on its expireDate or batch expireDates.
+   * @param {Object} product - Raw product document
+   * @param {Array}  batches - Batch documents for this product
+   * @returns {boolean}
+   */
+  isProductExpired(product, batches) {
+    const now = new Date();
+
+    // Check product-level expireDate
+    if (product.expireDate && new Date(product.expireDate) < now) {
+      return true;
+    }
+
+    // A product is considered expired if ALL non-deleted batches are expired
+    if (batches && batches.length > 0) {
+      const allBatchesExpired = batches.every(
+        (b) => b.expireDate && new Date(b.expireDate) < now
+      );
+      if (allBatchesExpired) return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Find supplier info by its mysqlId
+   * @param {number} supplierId - Supplier mysqlId
+   * @returns {Promise<Object|null>} Supplier data
+   */
+  async findSupplierById(supplierId) {
+    if (!supplierId) return null;
+    return await this.getSuppliersCollection().findOne({ mysqlId: parseInt(supplierId) });
   }
 
   /**
@@ -58,8 +142,15 @@ export class ProductService {
         products.map(async (product) => {
           const productId = product.mysqlId || product.mysql_id || product.id;
           const quantity = await this.findQuantityByProductId(productId);
+          const returnInfo = await this.findReturnsByProductId(productId);
+          const isExpired = this.isProductExpired(product, quantity.batches);
+
+          // Get supplier info from the first batch
+          const supplierId = quantity.batches.length > 0 ? quantity.batches[0].supplierId : null;
+          const supplier = await this.findSupplierById(supplierId);
+
           const productModel = Product.fromDocument(product);
-          return productModel.formatWithQuantity(quantity);
+          return productModel.formatWithQuantity(quantity, returnInfo, isExpired, supplier);
         })
       );
 
@@ -90,21 +181,28 @@ export class ProductService {
   async getProductById(id) {
     try {
       const productId = parseInt(id);
-      const product = await this.getCollection().findOne({ 
+      const product = await this.getCollection().findOne({
         $or: [
           { mysqlId: productId },
           { mysql_id: productId },
           { id: productId }
         ]
       });
-      
+
       if (!product) {
         throw new Error('Product not found');
       }
 
       const quantity = await this.findQuantityByProductId(productId);
+      const returnInfo = await this.findReturnsByProductId(productId);
+      const isExpired = this.isProductExpired(product, quantity.batches);
+
+      // Get supplier info from the first batch
+      const supplierId = quantity.batches.length > 0 ? quantity.batches[0].supplierId : null;
+      const supplier = await this.findSupplierById(supplierId);
+
       const productModel = Product.fromDocument(product);
-      const productWithQuantity = productModel.formatWithQuantity(quantity);
+      const productWithQuantity = productModel.formatWithQuantity(quantity, returnInfo, isExpired, supplier);
 
       return {
         success: true,
@@ -137,8 +235,15 @@ export class ProductService {
         products.map(async (product) => {
           const productId = product.mysqlId || product.mysql_id || product.id;
           const quantity = await this.findQuantityByProductId(productId);
+          const returnInfo = await this.findReturnsByProductId(productId);
+          const isExpired = this.isProductExpired(product, quantity.batches);
+
+          // Get supplier info from the first batch
+          const supplierId = quantity.batches.length > 0 ? quantity.batches[0].supplierId : null;
+          const supplier = await this.findSupplierById(supplierId);
+
           const productModel = Product.fromDocument(product);
-          return productModel.formatWithQuantity(quantity);
+          return productModel.formatWithQuantity(quantity, returnInfo, isExpired, supplier);
         })
       );
 
@@ -189,8 +294,15 @@ export class ProductService {
         products.map(async (product) => {
           const productId = product.mysqlId || product.mysql_id || product.id;
           const quantity = await this.findQuantityByProductId(productId);
+          const returnInfo = await this.findReturnsByProductId(productId);
+          const isExpired = this.isProductExpired(product, quantity.batches);
+
+          // Get supplier info from the first batch
+          const supplierId = quantity.batches.length > 0 ? quantity.batches[0].supplierId : null;
+          const supplier = await this.findSupplierById(supplierId);
+
           const productModel = Product.fromDocument(product);
-          return productModel.formatWithQuantity(quantity);
+          return productModel.formatWithQuantity(quantity, returnInfo, isExpired, supplier);
         })
       );
 
@@ -222,13 +334,13 @@ export class ProductService {
     try {
       const product = Product.create(productData);
       const validation = product.validate();
-      
+
       if (!validation.isValid) {
         throw new Error(`Validation failed: ${validation.errors.join(', ')}`);
       }
 
       const result = await this.getCollection().insertOne(product.toDocument());
-      
+
       return {
         success: true,
         data: Product.fromDocument({ _id: result.insertedId, ...product.toDocument() }),
@@ -251,13 +363,13 @@ export class ProductService {
       const productId = parseInt(id);
       const product = Product.create(updateData);
       const validation = product.validate();
-      
+
       if (!validation.isValid) {
         throw new Error(`Validation failed: ${validation.errors.join(', ')}`);
       }
 
       const result = await this.getCollection().updateOne(
-        { 
+        {
           $or: [
             { mysqlId: productId },
             { mysql_id: productId },
@@ -272,7 +384,7 @@ export class ProductService {
       }
 
       const updatedProduct = await this.getProductById(id);
-      
+
       return {
         success: true,
         data: updatedProduct.data,

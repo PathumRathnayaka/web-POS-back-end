@@ -86,7 +86,7 @@ export class Product {
    * @param {Object} quantity - Quantity data
    * @returns {Object} Formatted product with quantity
    */
-  formatWithQuantity(quantity) {
+  formatWithQuantity(quantityData, returnInfo = {}, isExpired = false, supplier = null) {
     return {
       id: this.mysqlId || this.id,
       name: this.name,
@@ -96,16 +96,17 @@ export class Product {
       sale_price: this.salePrice,
       category: this.category,
       expire_date: this.expireDate,
-      supplier_id: this.supplierId,
-      supplier_name: this.supplierName,
+      supplier_id: supplier ? supplier.mysqlId : this.supplierId,
+      supplier_name: supplier ? supplier.name : this.supplierName,
       created_date: this.createdDate,
-      quantities: quantity ? {
-        id: quantity._id,
+      quantities: quantityData ? {
         product_id: this.mysqlId || this.id,
-        quantity_size: quantity.quantitySize || quantity.quantity_size,
-        created_date: quantity.createdDate || quantity.created_date,
-        updated_date: quantity.updatedDate || quantity.updated_date
-      } : null
+        quantity_size: quantityData.quantity_size || 0,
+        batches: quantityData.batches || []
+      } : { product_id: this.mysqlId || this.id, quantity_size: 0, batches: [] },
+      has_returned_stock: returnInfo.hasReturnedStock || false,
+      total_returned_quantity: returnInfo.totalReturnedQuantity || 0,
+      is_expired: isExpired
     };
   }
 
